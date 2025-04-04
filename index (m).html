@@ -1,0 +1,203 @@
+
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AllAgList Chat - Firebase GitHub Ready</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@joeattardi/emoji-button@4.6.3/dist/index.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; padding: 20px; }
+    .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    .hidden { display: none; }
+    .chat-box { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-top: 10px; background: #f9f9f9; }
+    .chat-input { display: flex; gap: 5px; margin-top: 10px; }
+    .chat-input input, .chat-input button { padding: 10px; }
+    .top-controls { display: flex; justify-content: space-between; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div id="loginBox">
+    <h3>আপনার নাম লিখুন</h3>
+    <input type="text" id="visitorName" placeholder="নাম...">
+    <button onclick="proceedToAgents()">পরবর্তী</button>
+  </div>
+
+  <div id="agentList" class="hidden">
+    <h3>এজেন্ট নির্বাচন করুন</h3>
+    <div id="agentButtons"></div>
+  </div>
+
+  <div id="chatSection" class="hidden">
+    <div class="top-controls">
+      <div>এজেন্ট: <b id="agentName"></b> <span id="typingStatus"></span></div>
+      <div>
+        <button onclick="toggleDark()">Dark</button>
+        <button onclick="exportChat()">Export</button>
+        <button onclick="rateChat()">Rate</button>
+      </div>
+    </div>
+    <div class="chat-box" id="chatBox"></div>
+    <div class="chat-input">
+      <button id="emojiBtn">😊</button>
+      <input type="text" id="msgInput" placeholder="মেসেজ লিখুন...">
+      <input type="file" id="fileInput" onchange="sendFile()">
+      <button onclick="sendMsg()">পাঠান</button>
+    </div>
+    <div class="chat-input">
+      <button onclick="startRecording()">🎤 Record</button>
+      <button onclick="stopRecording()">⏹️ Stop</button>
+    </div>
+  </div>
+</div>
+
+<audio id="notifySound" src="https://assets.mixkit.co/sfx/preview/mixkit-bell-notification-933.mp3"></audio>
+
+<script>
+  // Firebase Configuration
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    databaseURL: "https://YOUR_PROJECT.firebaseio.com",
+    projectId: "YOUR_PROJECT",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const storage = firebase.storage();
+
+  const agents = ["রাহুল", "সুমন", "মাহিন"];
+  let visitor = "", selectedAgent = "", mediaRecorder, chunks = [];
+  const emojiPicker = new EmojiButton();
+
+  emojiPicker.on('emoji', emoji => {
+    document.getElementById('msgInput').value += emoji;
+  });
+
+  document.getElementById('emojiBtn').addEventListener('click', () => {
+    emojiPicker.togglePicker(document.getElementById('emojiBtn'));
+  });
+
+  function proceedToAgents() {
+    visitor = document.getElementById('visitorName').value.trim();
+    if (visitor) {
+      document.getElementById('loginBox').classList.add('hidden');
+      document.getElementById('agentList').classList.remove('hidden');
+      const container = document.getElementById('agentButtons');
+      container.innerHTML = "";
+      agents.forEach(agent => {
+        const btn = document.createElement('button');
+        btn.innerText = agent + ' এর সাথে চ্যাট করুন';
+        btn.onclick = () => startChat(agent);
+        container.appendChild(btn);
+      });
+    }
+  }
+
+  function startChat(agent) {
+    selectedAgent = agent;
+    document.getElementById('agentList').classList.add('hidden');
+    document.getElementById('chatSection').classList.remove('hidden');
+    document.getElementById('agentName').innerText = agent;
+    autoReply();
+    listenMessages();
+  }
+
+  function chatPath() {
+    return `chats/${selectedAgent}_${visitor}`;
+  }
+
+  function sendMsg() {
+    const msg = document.getElementById('msgInput').value.trim();
+    if (msg) {
+      db.ref(chatPath()).push().set({ sender: visitor, text: msg, time: Date.now(), seen: false });
+      document.getElementById('msgInput').value = "";
+    }
+  }
+
+  function listenMessages() {
+    const box = document.getElementById('chatBox');
+    box.innerHTML = "";
+    db.ref(chatPath()).on('child_added', snap => {
+      const data = snap.val();
+      const div = document.createElement('div');
+      if (data.fileUrl) {
+        div.innerHTML = `${data.sender}: <a href="${data.fileUrl}" target="_blank">📁 ফাইল</a>`;
+      } else {
+        div.innerText = `${data.sender}: ${data.text}`;
+      }
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      if (data.sender !== visitor) document.getElementById('notifySound').play();
+    });
+  }
+
+  function sendFile() {
+    const file = document.getElementById("fileInput").files[0];
+    if (file) {
+      const ref = storage.ref(`chat_files/${Date.now()}_${file.name}`);
+      ref.put(file).then(snapshot => snapshot.ref.getDownloadURL()).then(url => {
+        db.ref(chatPath()).push().set({ sender: visitor, fileUrl: url, time: Date.now(), seen: false });
+      });
+    }
+  }
+
+  function toggleDark() {
+    document.body.classList.toggle("dark");
+    document.getElementById("chatBox").classList.toggle("dark");
+  }
+
+  function exportChat() {
+    db.ref(chatPath()).once("value", snapshot => {
+      let text = "";
+      snapshot.forEach(child => {
+        const msg = child.val();
+        text += `${msg.sender}: ${msg.text || msg.fileUrl}\n`;
+      });
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${selectedAgent}_${visitor}_chat.txt`;
+      a.click();
+    });
+  }
+
+  function rateChat() {
+    const r = prompt("Rate this chat (1-5):");
+    if (r && !isNaN(r)) db.ref(`ratings/${selectedAgent}`).push({ by: visitor, rating: r, time: Date.now() });
+  }
+
+  function autoReply() {
+    const msg = "স্বাগতম! কিভাবে সাহায্য করতে পারি?";
+    db.ref(chatPath()).push().set({ sender: selectedAgent, text: msg, seen: false, time: Date.now() });
+  }
+
+  function startRecording() {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.start();
+      chunks = [];
+      mediaRecorder.ondataavailable = e => chunks.push(e.data);
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const ref = storage.ref(`voice/${Date.now()}.webm`);
+        ref.put(blob).then(snap => snap.ref.getDownloadURL()).then(url => {
+          db.ref(chatPath()).push().set({ sender: visitor, fileUrl: url, time: Date.now(), seen: false });
+        });
+      };
+    });
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+  }
+</script>
+</body>
+</html>
